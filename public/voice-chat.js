@@ -12,37 +12,33 @@ class VoiceChat {
         this.connectionTimeout = null;
         this.iceGatheringTimeout = null;
         
-        // Enhanced ICE servers with multiple reliable options
+        // Metered.ca TURN servers - these are reliable and paid
         this.iceServers = {
             iceServers: [
-                // Google STUN servers
-                { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' },
-                { urls: 'stun:stun2.l.google.com:19302' },
-                { urls: 'stun:stun3.l.google.com:19302' },
-                
-                // Multiple free TURN servers for better reliability
+                // STUN server
                 {
-                    urls: 'turn:openrelay.metered.ca:80',
-                    username: 'openrelayproject',
-                    credential: 'openrelayproject'
+                    urls: "stun:stun.relay.metered.ca:80"
+                },
+                // TURN servers with your credentials
+                {
+                    urls: "turn:global.relay.metered.ca:80",
+                    username: "34c7fa2bfb03c62170a5054b",
+                    credential: "uVpV4Y0Wn0a9Ue1y"
                 },
                 {
-                    urls: 'turn:openrelay.metered.ca:443',
-                    username: 'openrelayproject',
-                    credential: 'openrelayproject'
+                    urls: "turn:global.relay.metered.ca:80?transport=tcp",
+                    username: "34c7fa2bfb03c62170a5054b",
+                    credential: "uVpV4Y0Wn0a9Ue1y"
                 },
                 {
-                    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-                    username: 'openrelayproject',
-                    credential: 'openrelayproject'
+                    urls: "turn:global.relay.metered.ca:443",
+                    username: "34c7fa2bfb03c62170a5054b",
+                    credential: "uVpV4Y0Wn0a9Ue1y"
                 },
-                
-                // Additional backup TURN servers
                 {
-                    urls: 'turn:relay1.expressturn.com:3478',
-                    username: 'efJHYRDGALGWGAUNCQ',
-                    credential: 'JZEOETFSDkfnfdhngdnfh04n'
+                    urls: "turns:global.relay.metered.ca:443?transport=tcp",
+                    username: "34c7fa2bfb03c62170a5054b",
+                    credential: "uVpV4Y0Wn0a9Ue1y"
                 }
             ],
             iceCandidatePoolSize: 10
@@ -50,6 +46,184 @@ class VoiceChat {
         
         this.initializeElements();
         this.initializeSocketEvents();
+    }
+    
+    // Alternative: Dynamic TURN credential fetching (more secure)
+    async fetchTurnCredentials() {
+        try {
+            const response = await fetch("https://chatappn.metered.live/api/v1/turn/credentials?apiKey=4bbb71458fd694e553688f6e0aa1c97cffa6");
+            const iceServers = await response.json();
+            console.log('✅ Fetched fresh TURN credentials:', iceServers);
+            return { iceServers };
+        } catch (error) {
+            console.error('❌ Failed to fetch TURN credentials:', error);
+            // Fallback to hardcoded credentials
+            return this.iceServers;
+        }
+    }
+    
+    async createPeerConnection() {
+        console.log('🔧 Creating peer connection with Metered.ca TURN servers...');
+        
+        // Option 1: Use hardcoded credentials (faster)
+        this.peerConnection = new RTCPeerConnection(this.iceServers);
+        
+        // Option 2: Fetch fresh credentials (more secure, uncomment if needed)
+        // const iceConfig = await this.fetchTurnCredentials();
+        // this.peerConnection = new RTCPeerConnection(iceConfig);
+        
+        this.setConnectionTimeout(30000); // 30 seconds should be enough now
+        
+        // Add local stream tracks
+        if (this.localStream) {
+            this.localStream.getTracks().forEach(track => {
+                console.log('➕ Adding local track:', track.kind);
+                this.peerConnection.addTrack(track, this.localStream);
+            });
+        }
+        
+        // Handle remote stream
+        this.peerConnection.ontrack = (event) => {
+            console.log('📺 Received remote track:', event.track.kind);
+            const [remoteStream] = event.streams;
+            this.remoteAudio.srcObject = remoteStream;
+            this.clearConnectionTimeout();
+            this.updateCallStatus('Voice connected!', 'connected');
+        };
+        
+        // ICE candidate handling
+        let candidateCount = 0;
+        this.peerConnection.onicecandidate = (event) => {
+            if (event.candidate) {
+                candidateCount++;
+                console.log(`🧊 ICE Candidate #${candidateCount}:`, {
+                    type: event.candidate.type,
+                    protocol: event.candidate.protocol,
+                    address: event.candidate.address?.substring(0, 15) + '...',
+                    port: event.candidate.port,
+                    priority: event.candidate.priority
+                });
+                
+                this.socket.emit('webrtc-ice-candidate', {
+                    candidate: event.candidate,
+                    targetId: this.currentCallPartner
+                });
+                
+                // Update status based on candidate type
+                if (event.candidate.type === 'relay') {
+                    this.updateCallStatus('🔄 Using Metered.ca relay...', 'connecting');
+                    console.log('✅ TURN relay candidate found - cross-network connection possible!');
+                } else if (event.candidate.type === 'srflx') {
+                    this.updateCallStatus('🌐 Using STUN connection...', 'connecting');
+                } else if (event.candidate.type === 'host') {
+                    this.updateCallStatus('🏠 Trying direct connection...', 'connecting');
+                }
+            } else {
+                console.log(`✅ ICE gathering completed. Found ${candidateCount} candidates`);
+                this.clearIceGatheringTimeout();
+            }
+        };
+        
+        // Connection state monitoring
+        this.peerConnection.onconnectionstatechange = () => {
+            const state = this.peerConnection.connectionState;
+            console.log('🔗 Connection state:', state);
+            
+            switch (state) {
+                case 'connecting':
+                    this.updateCallStatus('Connecting via Metered.ca...', 'connecting');
+                    break;
+                case 'connected':
+                    console.log('🎉 Successfully connected via Metered.ca TURN servers!');
+                    this.updateCallStatus('Connected', 'connected');
+                    this.clearConnectionTimeout();
+                    break;
+                case 'failed':
+                    console.error('❌ Connection failed even with paid TURN servers');
+                    this.updateCallStatus('Connection failed', 'failed');
+                    setTimeout(() => this.handleCallEnded(), 3000);
+                    break;
+                case 'disconnected':
+                    this.updateCallStatus('Connection lost', 'disconnected');
+                    setTimeout(() => {
+                        if (this.peerConnection?.connectionState === 'disconnected') {
+                            this.handleCallEnded();
+                        }
+                    }, 5000);
+                    break;
+                case 'closed':
+                    this.handleCallEnded();
+                    break;
+            }
+        };
+        
+        // ICE connection state
+        this.peerConnection.oniceconnectionstatechange = () => {
+            const state = this.peerConnection.iceConnectionState;
+            console.log('🧊 ICE connection state:', state);
+            
+            switch (state) {
+                case 'checking':
+                    this.updateCallStatus('Testing connection paths...', 'connecting');
+                    break;
+                case 'connected':
+                case 'completed':
+                    console.log('✅ ICE connection established successfully!');
+                    this.updateCallStatus('Voice connected', 'connected');
+                    this.clearConnectionTimeout();
+                    break;
+                case 'failed':
+                    console.error('❌ ICE connection failed');
+                    this.updateCallStatus('Connection failed', 'failed');
+                    break;
+                case 'disconnected':
+                    this.updateCallStatus('Reconnecting...', 'reconnecting');
+                    break;
+            }
+        };
+        
+        // ICE gathering state
+        this.peerConnection.onicegatheringstatechange = () => {
+            const state = this.peerConnection.iceGatheringState;
+            console.log('🧊 ICE gathering state:', state);
+            
+            if (state === 'gathering') {
+                this.updateCallStatus('Finding best connection...', 'connecting');
+                this.iceGatheringTimeout = setTimeout(() => {
+                    console.warn('⚠️ ICE gathering taking longer than expected');
+                    if (this.peerConnection?.iceGatheringState === 'gathering') {
+                        this.updateCallStatus('Connection timeout', 'failed');
+                        setTimeout(() => this.handleCallEnded(), 3000);
+                    }
+                }, 15000); // 15 seconds for paid TURN servers
+            } else if (state === 'complete') {
+                console.log('✅ ICE gathering completed with Metered.ca servers');
+                this.clearIceGatheringTimeout();
+            }
+        };
+    }
+    
+    setConnectionTimeout(timeout = 30000) {
+        this.clearConnectionTimeout();
+        this.connectionTimeout = setTimeout(() => {
+            console.error('⏰ Connection timeout after', timeout/1000, 'seconds');
+            this.updateCallStatus('Connection timeout', 'failed');
+            setTimeout(() => this.handleCallEnded(), 3000);
+        }, timeout);
+    }
+    
+    clearConnectionTimeout() {
+        if (this.connectionTimeout) {
+            clearTimeout(this.connectionTimeout);
+            this.connectionTimeout = null;
+        }
+    }
+    
+    clearIceGatheringTimeout() {
+        if (this.iceGatheringTimeout) {
+            clearTimeout(this.iceGatheringTimeout);
+            this.iceGatheringTimeout = null;
+        }
     }
     
     initializeElements() {
@@ -173,164 +347,6 @@ class VoiceChat {
         }
     }
     
-    createPeerConnection() {
-        console.log('Creating peer connection with ICE servers:', this.iceServers);
-        this.peerConnection = new RTCPeerConnection(this.iceServers);
-        
-        // Set connection timeout
-        this.setConnectionTimeout();
-        
-        // Add local stream tracks
-        if (this.localStream) {
-            this.localStream.getTracks().forEach(track => {
-                console.log('Adding local track:', track.kind);
-                this.peerConnection.addTrack(track, this.localStream);
-            });
-        }
-        
-        // Handle remote stream
-        this.peerConnection.ontrack = (event) => {
-            console.log('Received remote track:', event.track.kind);
-            const [remoteStream] = event.streams;
-            this.remoteAudio.srcObject = remoteStream;
-            this.clearConnectionTimeout();
-        };
-        
-        // Enhanced ICE candidate handling
-        this.peerConnection.onicecandidate = (event) => {
-            if (event.candidate) {
-                console.log('🧊 ICE Candidate:', {
-                    type: event.candidate.type,
-                    protocol: event.candidate.protocol,
-                    address: event.candidate.address,
-                    port: event.candidate.port,
-                    priority: event.candidate.priority
-                });
-                
-                this.socket.emit('webrtc-ice-candidate', {
-                    candidate: event.candidate,
-                    targetId: this.currentCallPartner
-                });
-            } else {
-                console.log('🧊 ICE gathering completed');
-            }
-        };
-        
-        // Connection state monitoring
-        this.peerConnection.onconnectionstatechange = () => {
-            const state = this.peerConnection.connectionState;
-            console.log('🔗 Connection state:', state);
-            
-            switch (state) {
-                case 'new':
-                    this.updateCallStatus('Initializing...', 'connecting');
-                    break;
-                case 'connecting':
-                    this.updateCallStatus('Connecting...', 'connecting');
-                    break;
-                case 'connected':
-                    this.updateCallStatus('Connected', 'connected');
-                    this.clearConnectionTimeout();
-                    break;
-                case 'disconnected':
-                    this.updateCallStatus('Disconnected', 'disconnected');
-                    setTimeout(() => this.handleCallEnded(), 2000);
-                    break;
-                case 'failed':
-                    console.error('❌ Connection failed');
-                    this.updateCallStatus('Connection failed', 'failed');
-                    setTimeout(() => this.handleCallEnded(), 2000);
-                    break;
-                case 'closed':
-                    this.handleCallEnded();
-                    break;
-            }
-        };
-        
-        // ICE connection state monitoring
-        this.peerConnection.oniceconnectionstatechange = () => {
-            const state = this.peerConnection.iceConnectionState;
-            console.log('🧊 ICE connection state:', state);
-            
-            switch (state) {
-                case 'checking':
-                    this.updateCallStatus('Finding connection path...', 'connecting');
-                    break;
-                case 'connected':
-                case 'completed':
-                    console.log('✅ ICE connection established');
-                    this.updateCallStatus('Voice connected', 'connected');
-                    this.clearConnectionTimeout();
-                    break;
-                case 'failed':
-                    console.error('❌ ICE connection failed - trying TURN servers');
-                    this.updateCallStatus('Connection failed', 'failed');
-                    // Don't immediately end call, let connection state handle it
-                    break;
-                case 'disconnected':
-                    this.updateCallStatus('Connection lost', 'disconnected');
-                    break;
-                case 'closed':
-                    this.handleCallEnded();
-                    break;
-            }
-        };
-        
-        // ICE gathering state monitoring
-        this.peerConnection.onicegatheringstatechange = () => {
-            const state = this.peerConnection.iceGatheringState;
-            console.log('🧊 ICE gathering state:', state);
-            
-            if (state === 'gathering') {
-                this.updateCallStatus('Preparing connection...', 'connecting');
-                // Set timeout for ICE gathering
-                this.iceGatheringTimeout = setTimeout(() => {
-                    console.warn('⚠️ ICE gathering timeout');
-                    if (this.peerConnection && this.peerConnection.iceGatheringState === 'gathering') {
-                        this.updateCallStatus('Connection timeout', 'failed');
-                        setTimeout(() => this.handleCallEnded(), 2000);
-                    }
-                }, 15000); // 15 second timeout
-            } else if (state === 'complete') {
-                console.log('✅ ICE gathering completed');
-                this.clearIceGatheringTimeout();
-            }
-        };
-        
-        // Data channel for connection testing (optional)
-        const dataChannel = this.peerConnection.createDataChannel('test', { ordered: true });
-        dataChannel.onopen = () => {
-            console.log('📡 Data channel opened');
-            dataChannel.send('ping');
-        };
-        dataChannel.onmessage = (event) => {
-            console.log('📡 Data channel message:', event.data);
-        };
-    }
-    
-    setConnectionTimeout() {
-        this.clearConnectionTimeout();
-        this.connectionTimeout = setTimeout(() => {
-            console.error('⏰ Connection timeout after 30 seconds');
-            this.updateCallStatus('Connection timeout', 'failed');
-            setTimeout(() => this.handleCallEnded(), 2000);
-        }, 30000); // 30 second timeout
-    }
-    
-    clearConnectionTimeout() {
-        if (this.connectionTimeout) {
-            clearTimeout(this.connectionTimeout);
-            this.connectionTimeout = null;
-        }
-    }
-    
-    clearIceGatheringTimeout() {
-        if (this.iceGatheringTimeout) {
-            clearTimeout(this.iceGatheringTimeout);
-            this.iceGatheringTimeout = null;
-        }
-    }
-    
     async handleIncomingCall(data) {
         this.callerName.textContent = data.callerUsername;
         this.currentCallPartner = data.callerId;
@@ -344,7 +360,7 @@ class VoiceChat {
         try {
             await this.getUserMedia();
             this.socket.emit('accept-voice-call', { callerId: this.currentCallPartner });
-            this.createPeerConnection();
+            await this.createPeerConnection();
             this.isInCall = true;
             this.toggleCallButtons();
         } catch (error) {
@@ -360,21 +376,18 @@ class VoiceChat {
     }
     
     async handleCallAccepted(data) {
-        console.log('📞 Call accepted by:', data.accepterId);
+        console.log('📞 Call accepted, setting up Metered.ca connection...');
         this.currentCallPartner = data.accepterId;
-        this.createPeerConnection();
+        await this.createPeerConnection();
         
         try {
-            console.log('📤 Creating offer...');
             const offer = await this.peerConnection.createOffer({
                 offerToReceiveAudio: true,
                 offerToReceiveVideo: false
             });
             
-            console.log('📤 Setting local description...');
             await this.peerConnection.setLocalDescription(offer);
             
-            console.log('📤 Sending offer...');
             this.socket.emit('webrtc-offer', {
                 offer: offer,
                 targetId: this.currentCallPartner
@@ -382,26 +395,22 @@ class VoiceChat {
             
             this.isInCall = true;
             this.toggleCallButtons();
+            
         } catch (error) {
             console.error('❌ Error creating offer:', error);
             this.updateCallStatus('Failed to create call', 'failed');
-            setTimeout(() => this.handleCallEnded(), 2000);
+            setTimeout(() => this.handleCallEnded(), 3000);
         }
     }
     
     async handleOffer(data) {
-        console.log('📥 Received offer from:', data.senderId);
+        console.log('📥 Received offer, setting up connection...');
         try {
-            console.log('📥 Setting remote description...');
             await this.peerConnection.setRemoteDescription(data.offer);
             
-            console.log('📤 Creating answer...');
             const answer = await this.peerConnection.createAnswer();
-            
-            console.log('📤 Setting local description...');
             await this.peerConnection.setLocalDescription(answer);
             
-            console.log('📤 Sending answer...');
             this.socket.emit('webrtc-answer', {
                 answer: answer,
                 targetId: data.senderId
@@ -409,19 +418,16 @@ class VoiceChat {
         } catch (error) {
             console.error('❌ Error handling offer:', error);
             this.updateCallStatus('Failed to answer call', 'failed');
-            setTimeout(() => this.handleCallEnded(), 2000);
+            setTimeout(() => this.handleCallEnded(), 3000);
         }
     }
     
     async handleAnswer(data) {
-        console.log('📥 Received answer from:', data.senderId);
+        console.log('📥 Received answer');
         try {
             await this.peerConnection.setRemoteDescription(data.answer);
-            console.log('✅ Answer processed successfully');
         } catch (error) {
             console.error('❌ Error handling answer:', error);
-            this.updateCallStatus('Failed to establish call', 'failed');
-            setTimeout(() => this.handleCallEnded(), 2000);
         }
     }
     
@@ -429,9 +435,7 @@ class VoiceChat {
         try {
             if (this.peerConnection && this.peerConnection.remoteDescription) {
                 await this.peerConnection.addIceCandidate(data.candidate);
-                console.log('✅ ICE candidate added:', data.candidate.type);
-            } else {
-                console.warn('⚠️ Received ICE candidate before remote description');
+                console.log('✅ Added ICE candidate:', data.candidate.type);
             }
         } catch (error) {
             console.error('❌ Error adding ICE candidate:', error);
@@ -480,7 +484,6 @@ class VoiceChat {
         if (this.localStream) {
             this.localStream.getTracks().forEach(track => {
                 track.stop();
-                console.log('🛑 Stopped track:', track.kind);
             });
             this.localStream = null;
         }
