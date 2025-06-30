@@ -10,11 +10,27 @@ class VoiceChat {
         this.isPrivateMode = false;
         this.privateCallTarget = null;
         
-        // STUN servers for NAT traversal
+        // STUN and TURN servers for NAT traversal and cross-network connectivity
         this.iceServers = {
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' }
+                { urls: 'stun:stun1.l.google.com:19302' },
+                // Free TURN servers for cross-network connectivity
+                {
+                    urls: 'turn:openrelay.metered.ca:80',
+                    username: 'openrelayproject',
+                    credential: 'openrelayproject'
+                },
+                {
+                    urls: 'turn:openrelay.metered.ca:443',
+                    username: 'openrelayproject',
+                    credential: 'openrelayproject'
+                },
+                {
+                    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+                    username: 'openrelayproject',
+                    credential: 'openrelayproject'
+                }
             ]
         };
         
@@ -159,9 +175,10 @@ class VoiceChat {
             this.remoteAudio.srcObject = remoteStream;
         };
         
-        // Handle ICE candidates
+        // Enhanced ICE candidate handling with logging
         this.peerConnection.onicecandidate = (event) => {
             if (event.candidate) {
+                console.log('ICE candidate type:', event.candidate.type, 'Protocol:', event.candidate.protocol);
                 this.socket.emit('webrtc-ice-candidate', {
                     candidate: event.candidate,
                     targetId: this.currentCallPartner
@@ -169,15 +186,39 @@ class VoiceChat {
             }
         };
         
-        // Handle connection state changes
+        // Enhanced connection state changes with better status updates
         this.peerConnection.onconnectionstatechange = () => {
             console.log('Connection state:', this.peerConnection.connectionState);
-            if (this.peerConnection.connectionState === 'connected') {
-                this.updateCallStatus('Connected', 'connected');
-            } else if (this.peerConnection.connectionState === 'disconnected' || 
-                      this.peerConnection.connectionState === 'failed') {
-                this.handleCallEnded();
+            
+            switch (this.peerConnection.connectionState) {
+                case 'connecting':
+                    this.updateCallStatus('Connecting...', 'connecting');
+                    break;
+                case 'connected':
+                    this.updateCallStatus('Connected', 'connected');
+                    break;
+                case 'disconnected':
+                case 'failed':
+                    this.handleCallEnded();
+                    break;
             }
+        };
+        
+        // Add ICE connection state logging for debugging
+        this.peerConnection.oniceconnectionstatechange = () => {
+            console.log('ICE connection state:', this.peerConnection.iceConnectionState);
+            
+            if (this.peerConnection.iceConnectionState === 'checking') {
+                this.updateCallStatus('Establishing connection...', 'connecting');
+            } else if (this.peerConnection.iceConnectionState === 'failed') {
+                console.error('ICE connection failed - may need better TURN servers');
+                this.updateCallStatus('Connection failed', 'failed');
+            }
+        };
+        
+        // Add ICE gathering state logging
+        this.peerConnection.onicegatheringstatechange = () => {
+            console.log('ICE gathering state:', this.peerConnection.iceGatheringState);
         };
     }
     
