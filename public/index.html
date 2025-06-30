@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Text Chat App</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Login Screen -->
+        <div id="login-container" class="login-container">
+            <h1>Join Chat Room</h1>
+            <div class="login-form">
+                <input type="text" id="username-input" placeholder="Enter your username" maxlength="20">
+                <button id="join-btn">Join Chat</button>
+            </div>
+        </div>
+
+        <!-- Chat Screen -->
+        <div id="chat-container" class="chat-container hidden">
+            <header class="chat-header">
+                <h2 id="chat-title">Group Chat</h2>
+                <div class="user-info">
+                    <span>Welcome, <strong id="current-user"></strong>!</span>
+                    <button id="back-to-group-btn" class="back-btn hidden">← Back to Group</button>
+                    <button id="leave-btn">Leave Chat</button>
+                </div>
+            </header>
+
+            <div class="chat-main">
+                <!-- Users List -->
+                <div class="users-sidebar">
+                    <h3>Online Users</h3>
+                    <ul id="users-list"></ul>
+                </div>
+
+                <!-- Messages Area -->
+                <div class="messages-area">
+                    <div id="messages-container" class="messages-container"></div>
+                    <div id="typing-indicator" class="typing-indicator"></div>
+                    
+                    <!-- Message Input -->
+                    <div class="message-input-container">
+                        <input type="text" id="message-input" placeholder="Type your message..." maxlength="500">
+                        <button id="send-btn">Send</button>
+                    </div>
+                </div>
+
+                <!-- Voice Chat Controls -->
+                <div class="voice-chat-controls">
+                    <button id="voice-call-btn" class="voice-btn" disabled>
+                        🎤 Start Voice Chat
+                    </button>
+                    <button id="mute-btn" class="voice-btn hidden">
+                        🔇 Mute
+                    </button>
+                    <button id="end-call-btn" class="voice-btn hidden">
+                        📞 End Call
+                    </button>
+                    <div id="call-status" class="call-status"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Socket.IO from CDN -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="voice-chat.js"></script>
+    <script src="script.js"></script>
+
+    <!-- Voice Call Modal -->
+    <div id="incoming-call-modal" class="modal hidden">
+        <div class="modal-content">
+            <h3>Incoming Voice Call</h3>
+            <p>Call from: <strong id="caller-name"></strong></p>
+            <div class="modal-buttons">
+                <button id="accept-call-btn" class="accept-btn">Accept</button>
+                <button id="reject-call-btn" class="reject-btn">Reject</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Audio elements for voice chat -->
+    <audio id="local-audio" muted autoplay></audio>
+    <audio id="remote-audio" autoplay></audio>
+</body>
+</html> 
