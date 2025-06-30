@@ -1,5 +1,5 @@
 // Connect to backend server
-const socket = io('http://localhost:3000');
+const socket = io('https://chatback-production-2072.up.railway.app');
 
 // DOM elements
 const loginContainer = document.getElementById('login-container');
