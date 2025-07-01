@@ -402,6 +402,7 @@ function startPrivateVideoCall(username) {
     if (voiceChat) {
         voiceChat.setPrivateMode(true, username);
         voiceChat.startVideoCall();
+        this.localVideo.srcObject = this.localStream;
     }
 }
 
