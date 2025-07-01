@@ -55,13 +55,32 @@
                     <button id="voice-call-btn" class="voice-btn" disabled>
                         🎤 Start Voice Chat
                     </button>
+                    <button id="video-call-btn" class="voice-btn" disabled>
+                        📹 Start Video Chat
+                    </button>
                     <button id="mute-btn" class="voice-btn hidden">
                         🔇 Mute
+                    </button>
+                    <button id="camera-btn" class="voice-btn hidden">
+                        📷 Camera Off
                     </button>
                     <button id="end-call-btn" class="voice-btn hidden">
                         📞 End Call
                     </button>
                     <div id="call-status" class="call-status"></div>
+                </div>
+
+                <!-- Video Chat Area -->
+                <div id="video-chat-area" class="video-chat-area hidden">
+                    <div class="video-container">
+                        <video id="local-video" autoplay muted playsinline></video>
+                        <video id="remote-video" autoplay playsinline></video>
+                        <div class="video-controls">
+                            <button id="toggle-camera" class="video-control-btn">📷</button>
+                            <button id="toggle-mic" class="video-control-btn">🎤</button>
+                            <button id="end-video-call" class="video-control-btn end-call">📞</button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -80,6 +99,18 @@
             <div class="modal-buttons">
                 <button id="accept-call-btn" class="accept-btn">Accept</button>
                 <button id="reject-call-btn" class="reject-btn">Reject</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Video Call Modal -->
+    <div id="incoming-video-call-modal" class="modal hidden">
+        <div class="modal-content">
+            <h3>Incoming Video Call</h3>
+            <p>Video call from: <strong id="video-caller-name"></strong></p>
+            <div class="modal-buttons">
+                <button id="accept-video-call-btn" class="accept-btn">Accept</button>
+                <button id="reject-video-call-btn" class="reject-btn">Reject</button>
             </div>
         </div>
     </div>

@@ -1,6 +1,6 @@
 // Connect to backend server
-// const socket = io('https://chatback-production-2072.up.railway.app');
-const socket = io('http://localhost:3000');
+const socket = io('https://chatback-production-2072.up.railway.app');
+// const socket = io('http://localhost:3000');
 
 // DOM elements
 const loginContainer = document.getElementById('login-container');
@@ -229,7 +229,7 @@ function updateUsersList(users) {
     separator.innerHTML = '<hr>';
     usersList.appendChild(separator);
     
-    // Add individual users
+    // Add individual users with video call buttons
     users.forEach(username => {
         if (username !== currentUsername) {
             const li = document.createElement('li');
@@ -241,6 +241,7 @@ function updateUsersList(users) {
                 </small>
                 <div class="user-actions">
                     <button class="action-btn call-btn" onclick="startPrivateCall('${username}')">📞</button>
+                    <button class="action-btn video-btn" onclick="startPrivateVideoCall('${username}')">📹</button>
                     <button class="action-btn" onclick="switchToPrivateChat('${username}')">💬</button>
                 </div>
             `;
@@ -394,4 +395,15 @@ socket.on('disconnect', () => {
 // Make functions globally available
 window.switchToPrivateChat = switchToPrivateChat;
 window.startPrivateCall = startPrivateCall;
-window.startGroupCall = startGroupCall; 
+window.startGroupCall = startGroupCall;
+
+// Add this function to make it globally available
+function startPrivateVideoCall(username) {
+    if (voiceChat) {
+        voiceChat.setPrivateMode(true, username);
+        voiceChat.startVideoCall();
+    }
+}
+
+// Make the function globally available
+window.startPrivateVideoCall = startPrivateVideoCall; 

@@ -49,6 +49,12 @@ class VoiceChat {
             iceCandidatePoolSize: 10
         };
         
+        // Video-specific properties
+        this.isVideoCall = false;
+        this.isCameraOn = true;
+        this.localVideoStream = null;
+        this.remoteVideoStream = null;
+        
         this.initializeElements();
         this.initializeSocketEvents();
     }
@@ -183,17 +189,27 @@ class VoiceChat {
             });
         }
         
-        // Handle remote stream
+        // Handle remote stream - FIXED VERSION
         this.peerConnection.ontrack = (event) => {
             console.log('📺 Received remote track:', event.track.kind);
             const [remoteStream] = event.streams;
-            this.remoteAudio.srcObject = remoteStream;
-            this.updateCallStatus('Voice connected!', 'connected');
+            
+            if (this.isVideoCall) {
+                // For video calls, set the complete stream to video element (it includes audio)
+                this.remoteVideo.srcObject = remoteStream;
+                console.log('✅ Remote video stream set:', remoteStream);
+                this.updateCallStatus('Video connected!', 'connected');
+            } else {
+                // For voice calls, set to audio element
+                this.remoteAudio.srcObject = remoteStream;
+                this.updateCallStatus('Voice connected!', 'connected');
+            }
         };
         
         // ICE candidate handling
         this.peerConnection.onicecandidate = (event) => {
             if (event.candidate) {
+                console.log('🧊 Sending ICE candidate:', event.candidate.type);
                 this.socket.emit('webrtc-ice-candidate', {
                     candidate: event.candidate,
                     targetId: this.currentCallPartner
@@ -208,14 +224,23 @@ class VoiceChat {
             
             switch (state) {
                 case 'connected':
-                    this.updateCallStatus('Connected', 'connected');
+                    console.log('🎉 Successfully connected!');
+                    this.clearConnectionTimeout();
                     break;
                 case 'failed':
                 case 'closed':
-                    this.handleCallEnded();
+                    console.log('❌ Connection ended');
+                    this.cleanup();
                     break;
             }
         };
+        
+        // Add ICE connection state monitoring
+        this.peerConnection.oniceconnectionstatechange = () => {
+            console.log('🧊 ICE connection state:', this.peerConnection.iceConnectionState);
+        };
+        
+        this.setConnectionTimeout();
     }
     
     setConnectionTimeout(timeout = 30000) {
@@ -253,12 +278,33 @@ class VoiceChat {
         this.localAudio = document.getElementById('local-audio');
         this.remoteAudio = document.getElementById('remote-audio');
         
+        // Video elements
+        this.videoCallBtn = document.getElementById('video-call-btn');
+        this.cameraBtn = document.getElementById('camera-btn');
+        this.localVideo = document.getElementById('local-video');
+        this.remoteVideo = document.getElementById('remote-video');
+        this.videoChatArea = document.getElementById('video-chat-area');
+        this.incomingVideoCallModal = document.getElementById('incoming-video-call-modal');
+        this.videoCallerName = document.getElementById('video-caller-name');
+        this.acceptVideoCallBtn = document.getElementById('accept-video-call-btn');
+        this.rejectVideoCallBtn = document.getElementById('reject-video-call-btn');
+        this.toggleCameraBtn = document.getElementById('toggle-camera');
+        this.toggleMicBtn = document.getElementById('toggle-mic');
+        this.endVideoCallBtn = document.getElementById('end-video-call');
+        
         // Event listeners
         this.voiceCallBtn.addEventListener('click', () => this.startVoiceCall());
         this.muteBtn.addEventListener('click', () => this.toggleMute());
         this.endCallBtn.addEventListener('click', () => this.endCall());
         this.acceptCallBtn.addEventListener('click', () => this.acceptCall());
         this.rejectCallBtn.addEventListener('click', () => this.rejectCall());
+        this.videoCallBtn.addEventListener('click', () => this.startVideoCall());
+        this.cameraBtn.addEventListener('click', () => this.toggleCamera());
+        this.acceptVideoCallBtn.addEventListener('click', () => this.acceptVideoCall());
+        this.rejectVideoCallBtn.addEventListener('click', () => this.rejectVideoCall());
+        this.toggleCameraBtn.addEventListener('click', () => this.toggleCamera());
+        this.toggleMicBtn.addEventListener('click', () => this.toggleMute());
+        this.endVideoCallBtn.addEventListener('click', () => this.endVideoCall());
     }
     
     initializeSocketEvents() {
@@ -303,6 +349,23 @@ class VoiceChat {
             this.handleIceCandidate(data);
         });
         
+        // Video call events
+        this.socket.on('incoming-video-call', (data) => {
+            this.handleIncomingVideoCall(data);
+        });
+        
+        this.socket.on('video-call-accepted', (data) => {
+            this.handleVideoCallAccepted(data);
+        });
+        
+        this.socket.on('video-call-rejected', () => {
+            this.handleVideoCallRejected();
+        });
+        
+        this.socket.on('video-call-ended', () => {
+            this.handleVideoCallEnded();
+        });
+        
         console.log('✅ Socket events set up complete');
     }
     
@@ -312,13 +375,19 @@ class VoiceChat {
         
         if (isPrivate && targetUsername) {
             this.voiceCallBtn.textContent = `📞 Call ${targetUsername}`;
+            this.videoCallBtn.textContent = `📹 Video Call ${targetUsername}`;
             this.voiceCallBtn.disabled = false;
+            this.videoCallBtn.disabled = false;
         } else if (isPrivate) {
             this.voiceCallBtn.textContent = '📞 Private Call';
+            this.videoCallBtn.textContent = '📹 Private Video Call';
             this.voiceCallBtn.disabled = true;
+            this.videoCallBtn.disabled = true;
         } else {
             this.voiceCallBtn.textContent = '🎤 Start Group Voice Chat';
-            this.voiceCallBtn.disabled = false; // Enable group calls
+            this.videoCallBtn.textContent = '📹 Start Group Video Chat';
+            this.voiceCallBtn.disabled = false;
+            this.videoCallBtn.disabled = false;
         }
     }
     
@@ -365,6 +434,10 @@ class VoiceChat {
     }
     
     async getUserMedia() {
+        if (this.isVideoCall) {
+            return this.getUserMediaWithVideo();
+        }
+        
         try {
             this.localStream = await navigator.mediaDevices.getUserMedia({ 
                 audio: {
@@ -378,6 +451,36 @@ class VoiceChat {
             return this.localStream;
         } catch (error) {
             throw new Error('Microphone access denied or not available');
+        }
+    }
+    
+    async getUserMediaWithVideo() {
+        try {
+            console.log('🎥 Requesting camera and microphone access...');
+            this.localStream = await navigator.mediaDevices.getUserMedia({ 
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
+                }, 
+                video: {
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 },
+                    frameRate: { ideal: 30 }
+                }
+            });
+            
+            console.log('✅ Got local stream:', this.localStream);
+            console.log('📹 Video tracks:', this.localStream.getVideoTracks());
+            console.log('🎤 Audio tracks:', this.localStream.getAudioTracks());
+            
+            this.localVideo.srcObject = this.localStream;
+            this.localAudio.srcObject = this.localStream;
+            
+            return this.localStream;
+        } catch (error) {
+            console.error('❌ Error getting user media:', error);
+            throw new Error('Camera/microphone access denied or not available');
         }
     }
     
@@ -466,43 +569,55 @@ class VoiceChat {
     }
     
     async handleOffer(data) {
-        console.log('📥 Received offer from:', data.senderId);
+        console.log('📨 Received offer from:', data.senderId);
+        
+        if (!this.peerConnection) {
+            console.log('🔧 Creating peer connection for incoming offer...');
+            await this.createPeerConnection();
+        }
         
         try {
-            // Get or create peer connection for this user
-            let peerConnection = this.peerConnections.get(data.senderId);
-            if (!peerConnection) {
-                peerConnection = await this.createPeerConnectionForUser(data.senderId);
-            }
+            await this.peerConnection.setRemoteDescription(data.offer);
+            console.log('✅ Remote description set');
             
-            await peerConnection.setRemoteDescription(data.offer);
-            console.log('✅ Remote description set for user:', data.senderId);
+            const answer = await this.peerConnection.createAnswer({
+                offerToReceiveAudio: true,
+                offerToReceiveVideo: this.isVideoCall // Only request video if it's a video call
+            });
             
-            const answer = await peerConnection.createAnswer();
-            await peerConnection.setLocalDescription(answer);
-            console.log('✅ Answer created for user:', data.senderId);
+            await this.peerConnection.setLocalDescription(answer);
+            console.log('✅ Local description set, sending answer...');
             
             this.socket.emit('webrtc-answer', {
                 answer: answer,
                 targetId: data.senderId
             });
-            console.log('✅ Answer sent to user:', data.senderId);
+            
+            this.isInCall = true;
+            this.toggleCallButtons();
+            this.clearConnectionTimeout();
             
         } catch (error) {
             console.error('❌ Error handling offer:', error);
+            this.updateCallStatus('Connection failed', 'failed');
+            setTimeout(() => this.handleCallEnded(), 3000);
         }
     }
     
     async handleAnswer(data) {
-        console.log('📥 Received answer from:', data.senderId);
+        console.log('📨 Received answer from:', data.senderId);
+        
         try {
-            const peerConnection = this.peerConnections.get(data.senderId);
-            if (peerConnection) {
-                await peerConnection.setRemoteDescription(data.answer);
-                console.log('✅ Answer processed for user:', data.senderId);
-            }
+            await this.peerConnection.setRemoteDescription(data.answer);
+            console.log('✅ Remote description set from answer');
+            this.isInCall = true;
+            this.toggleCallButtons();
+            this.clearConnectionTimeout();
+            
         } catch (error) {
             console.error('❌ Error handling answer:', error);
+            this.updateCallStatus('Connection failed', 'failed');
+            setTimeout(() => this.handleCallEnded(), 3000);
         }
     }
     
@@ -587,6 +702,18 @@ class VoiceChat {
         setTimeout(() => {
             this.updateCallStatus('', '');
         }, 3000);
+        
+        // Video-specific cleanup
+        if (this.localVideo) {
+            this.localVideo.srcObject = null;
+        }
+        if (this.remoteVideo) {
+            this.remoteVideo.srcObject = null;
+        }
+        
+        this.isVideoCall = false;
+        this.isCameraOn = true;
+        this.hideVideoInterface();
     }
     
     toggleCallButtons() {
@@ -726,5 +853,124 @@ class VoiceChat {
                 console.error('❌ Error creating offer for group call:', error);
             }
         }
+    }
+    
+    async startVideoCall() {
+        let targetUser;
+        
+        if (this.isPrivateMode && this.privateCallTarget) {
+            targetUser = this.privateCallTarget;
+        } else {
+            targetUser = this.getSelectedUser();
+        }
+        
+        if (!targetUser && this.isPrivateMode) {
+            alert('Please select a user to video call');
+            return;
+        }
+        
+        try {
+            this.isVideoCall = true;
+            await this.getUserMediaWithVideo();
+            
+            if (this.isPrivateMode && this.privateCallTarget) {
+                this.socket.emit('request-video-call', { targetUsername: this.privateCallTarget });
+                this.updateCallStatus('Starting video call with ' + this.privateCallTarget + '...', 'calling');
+            } else {
+                this.socket.emit('request-video-call', { targetUsername: targetUser });
+                this.updateCallStatus('Starting video call with ' + targetUser + '...', 'calling');
+            }
+            
+            this.isInitiator = true;
+            this.showVideoInterface();
+        } catch (error) {
+            console.error('Error starting video call:', error);
+            alert('Could not access camera/microphone. Please check permissions.');
+            this.isVideoCall = false;
+        }
+    }
+    
+    async handleIncomingVideoCall(data) {
+        this.videoCallerName.textContent = data.callerUsername;
+        this.currentCallPartner = data.callerId;
+        this.isInitiator = false;
+        this.isVideoCall = true;
+        this.incomingVideoCallModal.classList.remove('hidden');
+    }
+    
+    async acceptVideoCall() {
+        this.incomingVideoCallModal.classList.add('hidden');
+        
+        try {
+            await this.getUserMediaWithVideo();
+            this.socket.emit('accept-video-call', { callerId: this.currentCallPartner });
+            await this.createPeerConnection();
+            this.isInCall = true;
+            this.showVideoInterface();
+            this.toggleCallButtons();
+        } catch (error) {
+            console.error('Error accepting video call:', error);
+            alert('Could not accept video call. Please check camera/microphone permissions.');
+        }
+    }
+    
+    rejectVideoCall() {
+        this.incomingVideoCallModal.classList.add('hidden');
+        this.socket.emit('reject-video-call', { callerId: this.currentCallPartner });
+        this.currentCallPartner = null;
+        this.isVideoCall = false;
+    }
+    
+    async handleVideoCallAccepted(data) {
+        console.log('📹 Video call accepted');
+        this.currentCallPartner = data.accepterId;
+        await this.createPeerConnection();
+        this.isInCall = true;
+        this.toggleCallButtons();
+    }
+    
+    handleVideoCallRejected() {
+        this.updateCallStatus('Video call rejected', 'rejected');
+        this.cleanup();
+    }
+    
+    handleVideoCallEnded() {
+        this.updateCallStatus('Video call ended', 'ended');
+        this.hideVideoInterface();
+        this.cleanup();
+    }
+    
+    showVideoInterface() {
+        this.videoChatArea.classList.remove('hidden');
+    }
+    
+    hideVideoInterface() {
+        this.videoChatArea.classList.add('hidden');
+    }
+    
+    toggleCamera() {
+        if (this.localStream) {
+            const videoTrack = this.localStream.getVideoTracks()[0];
+            if (videoTrack) {
+                videoTrack.enabled = !videoTrack.enabled;
+                this.isCameraOn = videoTrack.enabled;
+                
+                // Update button text
+                const cameraBtn = this.cameraBtn || this.toggleCameraBtn;
+                if (cameraBtn) {
+                    cameraBtn.textContent = this.isCameraOn ? '📷' : '❌';
+                }
+                
+                console.log('📷 Camera toggled:', this.isCameraOn ? 'ON' : 'OFF');
+            }
+        }
+    }
+    
+    endVideoCall() {
+        if (this.currentCallPartner) {
+            this.socket.emit('end-video-call', { targetId: this.currentCallPartner });
+        }
+        this.hideVideoInterface();
+        this.cleanup();
     }
 } 

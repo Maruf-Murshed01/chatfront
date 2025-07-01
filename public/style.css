@@ -568,4 +568,184 @@ body {
 /* Add icon indicators to the chat title */
 .chat-title-icon {
     margin-right: 8px;
+}
+
+/* Video Chat Styles */
+.video-chat-area {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.95);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.video-container {
+    position: relative;
+    width: 90%;
+    max-width: 1200px;
+    height: 80%;
+    display: flex;
+    gap: 20px;
+    justify-content: center;
+    align-items: center;
+}
+
+#local-video, #remote-video {
+    width: 48%;
+    height: 100%;
+    background: #1a1a1a;
+    border-radius: 15px;
+    object-fit: cover;
+    border: 2px solid #333;
+    min-height: 300px;
+    display: block !important;
+}
+
+#local-video {
+    transform: scaleX(-1); /* Mirror local video */
+}
+
+.video-controls {
+    position: absolute;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 20px;
+    background: rgba(0, 0, 0, 0.7);
+    padding: 15px 25px;
+    border-radius: 50px;
+    backdrop-filter: blur(10px);
+}
+
+.video-control-btn {
+    width: 60px;
+    height: 60px;
+    border: none;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+    font-size: 24px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.video-control-btn:hover {
+    background: rgba(255, 255, 255, 0.3);
+    transform: scale(1.1);
+}
+
+.video-control-btn.end-call {
+    background: #ff4757;
+}
+
+.video-control-btn.end-call:hover {
+    background: #ff3838;
+}
+
+.video-control-btn.muted {
+    background: #ff4757;
+}
+
+.video-control-btn.camera-off {
+    background: #ff4757;
+}
+
+/* Video call button styling */
+#video-call-btn {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 25px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    margin-left: 10px;
+}
+
+#video-call-btn:hover:not(:disabled) {
+    background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+    transform: translateY(-2px);
+}
+
+#video-call-btn:disabled {
+    background: #ccc;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* User actions styling for video button */
+.user-actions .video-btn {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    padding: 5px 8px;
+    border-radius: 15px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.user-actions .video-btn:hover {
+    background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+    transform: scale(1.05);
+}
+
+/* Responsive video layout */
+@media (max-width: 768px) {
+    .video-container {
+        flex-direction: column;
+        width: 95%;
+        height: 90%;
+        gap: 15px;
+    }
+    
+    #local-video, #remote-video {
+        width: 100%;
+        height: 45%;
+    }
+    
+    .video-controls {
+        bottom: 20px;
+        padding: 10px 20px;
+        gap: 15px;
+    }
+    
+    .video-control-btn {
+        width: 50px;
+        height: 50px;
+        font-size: 20px;
+    }
+}
+
+/* Loading states */
+.video-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #1a1a1a;
+    color: white;
+    font-size: 16px;
+}
+
+.video-loading::before {
+    content: "📹 ";
+    margin-right: 8px;
+}
+
+/* Add a placeholder for when no video is available */
+#remote-video:not([src]):not([srcObject]) {
+    background-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y="50" x="50" text-anchor="middle" fill="white">No Video</text></svg>');
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: contain;
 } 
