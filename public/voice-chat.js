@@ -471,11 +471,14 @@ class VoiceChat {
             });
             
             console.log('✅ Got local stream:', this.localStream);
-            console.log('📹 Video tracks:', this.localStream.getVideoTracks());
-            console.log('🎤 Audio tracks:', this.localStream.getAudioTracks());
             
-            this.localVideo.srcObject = this.localStream;
-            this.localAudio.srcObject = this.localStream;
+            // FIX: Properly assign local video
+            if (this.localVideo) {
+                this.localVideo.srcObject = this.localStream;
+            }
+            if (this.localAudio) {
+                this.localAudio.srcObject = this.localStream;
+            }
             
             return this.localStream;
         } catch (error) {
@@ -623,10 +626,20 @@ class VoiceChat {
     
     async handleIceCandidate(data) {
         try {
-            const peerConnection = this.peerConnections.get(data.senderId);
+            // Use the correct peer connection based on call type
+            let peerConnection;
+            
+            if (this.isPrivateMode || !this.isInCall) {
+                // Private call - use single peer connection
+                peerConnection = this.peerConnection;
+            } else {
+                // Group call - use peer connections map
+                peerConnection = this.peerConnections.get(data.senderId);
+            }
+            
             if (peerConnection && peerConnection.remoteDescription) {
                 await peerConnection.addIceCandidate(data.candidate);
-                console.log('✅ Added ICE candidate for user:', data.senderId);
+                console.log('✅ Added ICE candidate');
             }
         } catch (error) {
             console.error('❌ Error adding ICE candidate:', error);
