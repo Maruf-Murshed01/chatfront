@@ -471,10 +471,13 @@ class VoiceChat {
             });
             
             console.log('✅ Got local stream:', this.localStream);
+            console.log('📹 Video tracks:', this.localStream.getVideoTracks());
+            console.log('🎤 Audio tracks:', this.localStream.getAudioTracks());
             
-            // FIX: Properly assign local video
+            // ✅ FIX: Properly set local video
             if (this.localVideo) {
                 this.localVideo.srcObject = this.localStream;
+                console.log('✅ Local video element set');
             }
             if (this.localAudio) {
                 this.localAudio.srcObject = this.localStream;
@@ -544,14 +547,14 @@ class VoiceChat {
     }
     
     async handleCallAccepted(data) {
-        console.log('📞 Call accepted, setting up Metered.ca connection...');
+        console.log('📞 Call accepted, setting up connection...');
         this.currentCallPartner = data.accepterId;
         await this.createPeerConnection();
         
         try {
             const offer = await this.peerConnection.createOffer({
                 offerToReceiveAudio: true,
-                offerToReceiveVideo: false
+                offerToReceiveVideo: this.isVideoCall
             });
             
             await this.peerConnection.setLocalDescription(offer);
