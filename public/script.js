@@ -1,5 +1,6 @@
 // Connect to backend server
-const socket = io('https://chatback-production-2072.up.railway.app');
+// const socket = io('https://chatback-production-2072.up.railway.app');
+const socket = io('http://localhost:3000');
 
 // DOM elements
 const loginContainer = document.getElementById('login-container');
@@ -51,7 +52,9 @@ function joinChat() {
         messageInput.focus();
         
         // Initialize voice chat after joining
+        console.log('🎤 Initializing VoiceChat...');
         voiceChat = new VoiceChat(socket);
+        console.log('✅ VoiceChat initialized:', voiceChat);
     }
 }
 
@@ -83,7 +86,10 @@ function leaveChat() {
 
 function switchToGroupChat() {
     currentPrivateChat = null;
-    chatTitle.textContent = 'Group Chat';
+    chatTitle.textContent = '👥 Group Chat';
+    document.getElementById('chat-description').textContent = 'Messages visible to everyone';
+    document.getElementById('chat-description').className = 'chat-description group';
+    document.querySelector('.messages-area').classList.remove('private-mode');
     backToGroupBtn.classList.add('hidden');
     messageInput.placeholder = 'Type your message...';
     
@@ -104,7 +110,10 @@ function switchToPrivateChat(username) {
     if (username === currentUsername) return;
     
     currentPrivateChat = username;
-    chatTitle.textContent = `Private Chat with ${username}`;
+    chatTitle.textContent = `🔒 Private Chat with ${username}`;
+    document.getElementById('chat-description').textContent = 'Only you and ' + username + ' can see these messages';
+    document.getElementById('chat-description').className = 'chat-description private';
+    document.querySelector('.messages-area').classList.add('private-mode');
     backToGroupBtn.classList.remove('hidden');
     messageInput.placeholder = `Send a private message to ${username}...`;
     
@@ -200,37 +209,53 @@ function addSystemMessage(message) {
 
 function updateUsersList(users) {
     usersList.innerHTML = '';
+    
+    // Add "Everyone" option for group chat
+    const everyoneItem = document.createElement('li');
+    everyoneItem.setAttribute('data-username', 'everyone');
+    everyoneItem.className = 'everyone-option';
+    everyoneItem.innerHTML = `
+        <span>👥 Everyone (Group Chat)</span>
+        <small style="display: block; font-size: 11px; color: #666; margin-top: 2px;">
+            Public messages visible to all
+        </small>
+    `;
+    everyoneItem.addEventListener('click', () => switchToGroupChat());
+    usersList.appendChild(everyoneItem);
+    
+    // Add separator
+    const separator = document.createElement('li');
+    separator.className = 'users-separator';
+    separator.innerHTML = '<hr>';
+    usersList.appendChild(separator);
+    
+    // Add individual users
     users.forEach(username => {
-        const li = document.createElement('li');
-        li.setAttribute('data-username', username);
-        
-        if (username === currentUsername) {
-            li.classList.add('current-user');
-            li.innerHTML = `${username} (You)`;
-        } else {
+        if (username !== currentUsername) {
+            const li = document.createElement('li');
+            li.setAttribute('data-username', username);
             li.innerHTML = `
-                ${username}
+                <span>🔒 ${username}</span>
+                <small style="display: block; font-size: 11px; color: #666; margin-top: 2px;">
+                    Private messages
+                </small>
                 <div class="user-actions">
-                    <button class="action-btn" onclick="switchToPrivateChat('${username}')">💬</button>
                     <button class="action-btn call-btn" onclick="startPrivateCall('${username}')">📞</button>
+                    <button class="action-btn" onclick="switchToPrivateChat('${username}')">💬</button>
                 </div>
             `;
             li.addEventListener('click', () => switchToPrivateChat(username));
+            usersList.appendChild(li);
+        } else {
+            // Current user
+            const li = document.createElement('li');
+            li.className = 'current-user';
+            li.innerHTML = `${username} (You)`;
+            usersList.appendChild(li);
         }
-        
-        usersList.appendChild(li);
     });
     
     updateUsersListStyling();
-    
-    // Enable/disable voice call based on available users
-    if (voiceChat) {
-        if (users.length > 1) {
-            voiceChat.enableVoiceCall();
-        } else {
-            voiceChat.disableVoiceCall();
-        }
-    }
 }
 
 function updateUsersListStyling() {
@@ -241,12 +266,30 @@ function updateUsersListStyling() {
         if (username === currentPrivateChat) {
             li.classList.add('private-chat-active');
         }
+        // Highlight "Everyone" when in group chat
+        if (username === 'everyone' && !currentPrivateChat) {
+            li.classList.add('private-chat-active');
+        }
     });
 }
 
 function startPrivateCall(username) {
     if (voiceChat) {
         voiceChat.startPrivateCall(username);
+    }
+}
+
+function startGroupCall() {
+    console.log('🎤 startGroupCall called from script.js');
+    if (voiceChat) {
+        // Switch to group chat first if not already there
+        if (currentPrivateChat) {
+            switchToGroupChat();
+        }
+        // Call the group call method directly (NOT startVoiceCall)
+        voiceChat.startGroupCall();
+    } else {
+        console.error('❌ voiceChat not initialized');
     }
 }
 
@@ -350,4 +393,5 @@ socket.on('disconnect', () => {
 
 // Make functions globally available
 window.switchToPrivateChat = switchToPrivateChat;
-window.startPrivateCall = startPrivateCall; 
+window.startPrivateCall = startPrivateCall;
+window.startGroupCall = startGroupCall; 

@@ -1,16 +1,21 @@
 class VoiceChat {
     constructor(socket) {
         this.socket = socket;
-        this.peerConnection = null;
+        this.peerConnections = new Map(); // Map of userId -> peerConnection
         this.localStream = null;
         this.isInCall = false;
         this.isMuted = false;
-        this.currentCallPartner = null;
         this.isInitiator = false;
         this.isPrivateMode = false;
         this.privateCallTarget = null;
         this.connectionTimeout = null;
         this.iceGatheringTimeout = null;
+        this.pendingGroupCall = null;
+        this.groupCallParticipants = new Set(); // Track group call participants
+        
+        // For backward compatibility with 1-on-1 calls
+        this.currentCallPartner = null;
+        this.peerConnection = null;
         
         // Metered.ca TURN servers - these are reliable and paid
         this.iceServers = {
@@ -62,17 +67,113 @@ class VoiceChat {
         }
     }
     
+    async createPeerConnectionForUser(userId) {
+        console.log('🔧 Creating peer connection for user:', userId);
+        
+        const peerConnection = new RTCPeerConnection(this.iceServers);
+        
+        // Add local stream tracks
+        if (this.localStream) {
+            this.localStream.getTracks().forEach(track => {
+                console.log('➕ Adding local track for user:', userId, track.kind);
+                peerConnection.addTrack(track, this.localStream);
+            });
+        }
+        
+        // Handle remote stream
+        peerConnection.ontrack = (event) => {
+            console.log('📺 Received remote track from user:', userId, event.track.kind);
+            const [remoteStream] = event.streams;
+            
+            // Create or get audio element for this user
+            let audioElement = document.getElementById(`remote-audio-${userId}`);
+            if (!audioElement) {
+                audioElement = document.createElement('audio');
+                audioElement.id = `remote-audio-${userId}`;
+                audioElement.autoplay = true;
+                audioElement.style.display = 'none';
+                document.body.appendChild(audioElement);
+            }
+            audioElement.srcObject = remoteStream;
+            
+            this.updateCallStatus('Voice connected!', 'connected');
+        };
+        
+        // ICE candidate handling
+        peerConnection.onicecandidate = (event) => {
+            if (event.candidate) {
+                console.log(`🧊 ICE Candidate for user ${userId}:`, event.candidate.type);
+                
+                this.socket.emit('webrtc-ice-candidate', {
+                    candidate: event.candidate,
+                    targetId: userId
+                });
+            }
+        };
+        
+        // Connection state monitoring
+        peerConnection.onconnectionstatechange = () => {
+            const state = peerConnection.connectionState;
+            console.log(`🔗 Connection state with user ${userId}:`, state);
+            
+            switch (state) {
+                case 'connected':
+                    console.log(`🎉 Successfully connected to user ${userId}!`);
+                    this.updateCallStatus(`Connected to ${this.groupCallParticipants.size + 1} users`, 'connected');
+                    break;
+                case 'failed':
+                case 'closed':
+                    console.log(`❌ Connection with user ${userId} ended`);
+                    this.removePeerConnection(userId);
+                    break;
+            }
+        };
+        
+        this.peerConnections.set(userId, peerConnection);
+        return peerConnection;
+    }
+    
+    // Remove a peer connection
+    removePeerConnection(userId) {
+        const peerConnection = this.peerConnections.get(userId);
+        if (peerConnection) {
+            peerConnection.close();
+            this.peerConnections.delete(userId);
+            this.groupCallParticipants.delete(userId);
+            
+            // Remove audio element
+            const audioElement = document.getElementById(`remote-audio-${userId}`);
+            if (audioElement) {
+                audioElement.remove();
+            }
+            
+            console.log(`🗑️ Removed peer connection for user ${userId}`);
+            
+            // Update status
+            if (this.groupCallParticipants.size > 0) {
+                this.updateCallStatus(`Connected to ${this.groupCallParticipants.size} users`, 'connected');
+            } else {
+                this.updateCallStatus('Waiting for others to join...', 'calling');
+            }
+        }
+    }
+    
+    // Modified createPeerConnection for backward compatibility
     async createPeerConnection() {
-        console.log('🔧 Creating peer connection with Metered.ca TURN servers...');
+        if (this.isPrivateMode || !this.isInCall) {
+            // For private calls, use the old single peer connection method
+            return this.createSinglePeerConnection();
+        } else {
+            // For group calls, this shouldn't be called directly
+            console.warn('⚠️ createPeerConnection called in group call mode');
+        }
+    }
+    
+    // Original single peer connection method for private calls
+    async createSinglePeerConnection() {
+        console.log('🔧 Creating single peer connection...');
         
-        // Option 1: Use hardcoded credentials (faster)
         this.peerConnection = new RTCPeerConnection(this.iceServers);
-        
-        // Option 2: Fetch fresh credentials (more secure, uncomment if needed)
-        // const iceConfig = await this.fetchTurnCredentials();
-        // this.peerConnection = new RTCPeerConnection(iceConfig);
-        
-        this.setConnectionTimeout(30000); // 30 seconds should be enough now
         
         // Add local stream tracks
         if (this.localStream) {
@@ -87,40 +188,16 @@ class VoiceChat {
             console.log('📺 Received remote track:', event.track.kind);
             const [remoteStream] = event.streams;
             this.remoteAudio.srcObject = remoteStream;
-            this.clearConnectionTimeout();
             this.updateCallStatus('Voice connected!', 'connected');
         };
         
         // ICE candidate handling
-        let candidateCount = 0;
         this.peerConnection.onicecandidate = (event) => {
             if (event.candidate) {
-                candidateCount++;
-                console.log(`🧊 ICE Candidate #${candidateCount}:`, {
-                    type: event.candidate.type,
-                    protocol: event.candidate.protocol,
-                    address: event.candidate.address?.substring(0, 15) + '...',
-                    port: event.candidate.port,
-                    priority: event.candidate.priority
-                });
-                
                 this.socket.emit('webrtc-ice-candidate', {
                     candidate: event.candidate,
                     targetId: this.currentCallPartner
                 });
-                
-                // Update status based on candidate type
-                if (event.candidate.type === 'relay') {
-                    this.updateCallStatus('🔄 Using Metered.ca relay...', 'connecting');
-                    console.log('✅ TURN relay candidate found - cross-network connection possible!');
-                } else if (event.candidate.type === 'srflx') {
-                    this.updateCallStatus('🌐 Using STUN connection...', 'connecting');
-                } else if (event.candidate.type === 'host') {
-                    this.updateCallStatus('🏠 Trying direct connection...', 'connecting');
-                }
-            } else {
-                console.log(`✅ ICE gathering completed. Found ${candidateCount} candidates`);
-                this.clearIceGatheringTimeout();
             }
         };
         
@@ -130,75 +207,13 @@ class VoiceChat {
             console.log('🔗 Connection state:', state);
             
             switch (state) {
-                case 'connecting':
-                    this.updateCallStatus('Connecting via Metered.ca...', 'connecting');
-                    break;
                 case 'connected':
-                    console.log('🎉 Successfully connected via Metered.ca TURN servers!');
                     this.updateCallStatus('Connected', 'connected');
-                    this.clearConnectionTimeout();
                     break;
                 case 'failed':
-                    console.error('❌ Connection failed even with paid TURN servers');
-                    this.updateCallStatus('Connection failed', 'failed');
-                    setTimeout(() => this.handleCallEnded(), 3000);
-                    break;
-                case 'disconnected':
-                    this.updateCallStatus('Connection lost', 'disconnected');
-                    setTimeout(() => {
-                        if (this.peerConnection?.connectionState === 'disconnected') {
-                            this.handleCallEnded();
-                        }
-                    }, 5000);
-                    break;
                 case 'closed':
                     this.handleCallEnded();
                     break;
-            }
-        };
-        
-        // ICE connection state
-        this.peerConnection.oniceconnectionstatechange = () => {
-            const state = this.peerConnection.iceConnectionState;
-            console.log('🧊 ICE connection state:', state);
-            
-            switch (state) {
-                case 'checking':
-                    this.updateCallStatus('Testing connection paths...', 'connecting');
-                    break;
-                case 'connected':
-                case 'completed':
-                    console.log('✅ ICE connection established successfully!');
-                    this.updateCallStatus('Voice connected', 'connected');
-                    this.clearConnectionTimeout();
-                    break;
-                case 'failed':
-                    console.error('❌ ICE connection failed');
-                    this.updateCallStatus('Connection failed', 'failed');
-                    break;
-                case 'disconnected':
-                    this.updateCallStatus('Reconnecting...', 'reconnecting');
-                    break;
-            }
-        };
-        
-        // ICE gathering state
-        this.peerConnection.onicegatheringstatechange = () => {
-            const state = this.peerConnection.iceGatheringState;
-            console.log('🧊 ICE gathering state:', state);
-            
-            if (state === 'gathering') {
-                this.updateCallStatus('Finding best connection...', 'connecting');
-                this.iceGatheringTimeout = setTimeout(() => {
-                    console.warn('⚠️ ICE gathering taking longer than expected');
-                    if (this.peerConnection?.iceGatheringState === 'gathering') {
-                        this.updateCallStatus('Connection timeout', 'failed');
-                        setTimeout(() => this.handleCallEnded(), 3000);
-                    }
-                }, 15000); // 15 seconds for paid TURN servers
-            } else if (state === 'complete') {
-                console.log('✅ ICE gathering completed with Metered.ca servers');
-                this.clearIceGatheringTimeout();
             }
         };
     }
@@ -247,6 +262,8 @@ class VoiceChat {
     }
     
     initializeSocketEvents() {
+        console.log('🔧 Setting up socket events...');
+        
         this.socket.on('incoming-voice-call', (data) => {
             this.handleIncomingCall(data);
         });
@@ -263,6 +280,17 @@ class VoiceChat {
             this.handleCallEnded();
         });
         
+        // Add group call events with debugging
+        this.socket.on('group-call-available', (data) => {
+            console.log('📞 Received group-call-available:', data);
+            this.handleGroupCallAvailable(data);
+        });
+        
+        this.socket.on('user-joined-group-call', (data) => {
+            console.log('👥 Received user-joined-group-call:', data);
+            this.handleUserJoinedGroupCall(data);
+        });
+        
         this.socket.on('webrtc-offer', (data) => {
             this.handleOffer(data);
         });
@@ -274,6 +302,8 @@ class VoiceChat {
         this.socket.on('webrtc-ice-candidate', (data) => {
             this.handleIceCandidate(data);
         });
+        
+        console.log('✅ Socket events set up complete');
     }
     
     setPrivateMode(isPrivate, targetUsername = null) {
@@ -287,7 +317,8 @@ class VoiceChat {
             this.voiceCallBtn.textContent = '📞 Private Call';
             this.voiceCallBtn.disabled = true;
         } else {
-            this.voiceCallBtn.textContent = '🎤 Start Voice Chat';
+            this.voiceCallBtn.textContent = '🎤 Start Group Voice Chat';
+            this.voiceCallBtn.disabled = false; // Enable group calls
         }
     }
     
@@ -303,11 +334,14 @@ class VoiceChat {
         
         if (this.isPrivateMode && this.privateCallTarget) {
             targetUser = this.privateCallTarget;
+        } else if (!this.isPrivateMode) {
+            // This is a group call
+            return this.startGroupCall();
         } else {
             targetUser = this.getSelectedUser();
         }
         
-        if (!targetUser && !this.isPrivateMode) {
+        if (!targetUser && this.isPrivateMode) {
             alert('Please select a user to call from the online users list');
             return;
         }
@@ -359,10 +393,30 @@ class VoiceChat {
         
         try {
             await this.getUserMedia();
-            this.socket.emit('accept-voice-call', { callerId: this.currentCallPartner });
-            await this.createPeerConnection();
-            this.isInCall = true;
-            this.toggleCallButtons();
+            
+            // Check if this is a group call
+            if (this.pendingGroupCall) {
+                console.log('✅ Accepting group call');
+                
+                // Create peer connection for the joiner
+                this.currentCallPartner = this.pendingGroupCall.initiatorId;
+                await this.createPeerConnection();
+                
+                this.socket.emit('join-group-voice-call', { 
+                    initiatorId: this.pendingGroupCall.initiatorId,
+                    initiatorUsername: this.pendingGroupCall.initiatorUsername 
+                });
+                this.updateCallStatus('Joining group call...', 'calling');
+                this.isInCall = true;
+                this.toggleCallButtons();
+                this.pendingGroupCall = null; // Clear pending group call
+            } else {
+                console.log('✅ Accepting regular call');
+                this.socket.emit('accept-voice-call', { callerId: this.currentCallPartner });
+                await this.createPeerConnection();
+                this.isInCall = true;
+                this.toggleCallButtons();
+            }
         } catch (error) {
             console.error('Error accepting call:', error);
             alert('Could not accept call. Please check microphone permissions.');
@@ -371,7 +425,15 @@ class VoiceChat {
     
     rejectCall() {
         this.incomingCallModal.classList.add('hidden');
-        this.socket.emit('reject-voice-call', { callerId: this.currentCallPartner });
+        
+        if (this.pendingGroupCall) {
+            console.log('❌ Rejecting group call');
+            this.pendingGroupCall = null; // Clear pending group call
+        } else {
+            console.log('❌ Rejecting regular call');
+            this.socket.emit('reject-voice-call', { callerId: this.currentCallPartner });
+        }
+        
         this.currentCallPartner = null;
     }
     
@@ -404,28 +466,41 @@ class VoiceChat {
     }
     
     async handleOffer(data) {
-        console.log('📥 Received offer, setting up connection...');
+        console.log('📥 Received offer from:', data.senderId);
+        
         try {
-            await this.peerConnection.setRemoteDescription(data.offer);
+            // Get or create peer connection for this user
+            let peerConnection = this.peerConnections.get(data.senderId);
+            if (!peerConnection) {
+                peerConnection = await this.createPeerConnectionForUser(data.senderId);
+            }
             
-            const answer = await this.peerConnection.createAnswer();
-            await this.peerConnection.setLocalDescription(answer);
+            await peerConnection.setRemoteDescription(data.offer);
+            console.log('✅ Remote description set for user:', data.senderId);
+            
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            console.log('✅ Answer created for user:', data.senderId);
             
             this.socket.emit('webrtc-answer', {
                 answer: answer,
                 targetId: data.senderId
             });
+            console.log('✅ Answer sent to user:', data.senderId);
+            
         } catch (error) {
             console.error('❌ Error handling offer:', error);
-            this.updateCallStatus('Failed to answer call', 'failed');
-            setTimeout(() => this.handleCallEnded(), 3000);
         }
     }
     
     async handleAnswer(data) {
-        console.log('📥 Received answer');
+        console.log('📥 Received answer from:', data.senderId);
         try {
-            await this.peerConnection.setRemoteDescription(data.answer);
+            const peerConnection = this.peerConnections.get(data.senderId);
+            if (peerConnection) {
+                await peerConnection.setRemoteDescription(data.answer);
+                console.log('✅ Answer processed for user:', data.senderId);
+            }
         } catch (error) {
             console.error('❌ Error handling answer:', error);
         }
@@ -433,9 +508,10 @@ class VoiceChat {
     
     async handleIceCandidate(data) {
         try {
-            if (this.peerConnection && this.peerConnection.remoteDescription) {
-                await this.peerConnection.addIceCandidate(data.candidate);
-                console.log('✅ Added ICE candidate:', data.candidate.type);
+            const peerConnection = this.peerConnections.get(data.senderId);
+            if (peerConnection && peerConnection.remoteDescription) {
+                await peerConnection.addIceCandidate(data.candidate);
+                console.log('✅ Added ICE candidate for user:', data.senderId);
             }
         } catch (error) {
             console.error('❌ Error adding ICE candidate:', error);
@@ -473,9 +549,19 @@ class VoiceChat {
     cleanup() {
         console.log('🧹 Cleaning up call resources...');
         
-        this.clearConnectionTimeout();
-        this.clearIceGatheringTimeout();
+        // Close all peer connections
+        this.peerConnections.forEach((peerConnection, userId) => {
+            peerConnection.close();
+            // Remove audio elements
+            const audioElement = document.getElementById(`remote-audio-${userId}`);
+            if (audioElement) {
+                audioElement.remove();
+            }
+        });
+        this.peerConnections.clear();
+        this.groupCallParticipants.clear();
         
+        // Close single peer connection (for private calls)
         if (this.peerConnection) {
             this.peerConnection.close();
             this.peerConnection = null;
@@ -539,5 +625,106 @@ class VoiceChat {
         // In practice, we'll use the private call functionality
         const users = Array.from(document.querySelectorAll('#users-list li'));
         return users.find(user => user.classList.contains('selected'))?.getAttribute('data-username');
+    }
+    
+    // Add new method for group calls
+    async startGroupCall() {
+        console.log('🎤 Starting group call...');
+        this.isPrivateMode = false;
+        this.privateCallTarget = null;
+        
+        try {
+            await this.getUserMedia();
+            
+            // Emit group call request
+            console.log('📡 Emitting request-group-voice-call');
+            this.socket.emit('request-group-voice-call');
+            this.updateCallStatus('Group call started! Waiting for others to join...', 'calling');
+            
+            this.isInitiator = true;
+            this.isInCall = true;
+            this.toggleCallButtons();
+        } catch (error) {
+            console.error('Error accessing microphone:', error);
+            alert('Could not access microphone. Please check permissions and try again.');
+        }
+    }
+    
+    // Add new group call handlers
+    async handleGroupCallAvailable(data) {
+        // Get current username from the DOM element
+        const currentUser = document.getElementById('current-user').textContent;
+        
+        console.log('🔔 Group call available from:', data.initiatorUsername, 'Current user:', currentUser);
+        console.log('🔔 Comparison result:', data.initiatorUsername !== currentUser);
+        
+        if (data.initiatorUsername !== currentUser) {
+            // Use the existing modal for group call notification
+            const callerNameElement = document.getElementById('caller-name');
+            const incomingCallModal = document.getElementById('incoming-call-modal');
+            const modalTitle = incomingCallModal.querySelector('h3');
+            
+            // Update modal content for group call
+            modalTitle.textContent = 'Group Call Invitation';
+            callerNameElement.textContent = data.initiatorUsername + ' started a group call';
+            
+            // Store group call data
+            this.pendingGroupCall = {
+                initiatorId: data.initiatorId,
+                initiatorUsername: data.initiatorUsername
+            };
+            
+            // Show the modal
+            incomingCallModal.classList.remove('hidden');
+            
+            console.log('📱 Group call modal shown');
+        } else {
+            console.log('🚫 Not showing modal - user is the initiator');
+        }
+    }
+    
+    async handleUserJoinedGroupCall(data) {
+        const currentUser = document.getElementById('current-user').textContent;
+        
+        console.log('👥 User joined group call:', data.username, 'Current user:', currentUser);
+        console.log('👥 User ID:', data.userId, 'My socket ID:', this.socket.id);
+        
+        // Don't process our own join event
+        if (data.userId === this.socket.id) {
+            return;
+        }
+        
+        // Add to participants
+        this.groupCallParticipants.add(data.userId);
+        
+        // Show status update
+        if (data.username !== currentUser) {
+            this.updateCallStatus(`${data.username} joined the group call`, 'connected');
+        }
+        
+        // Create peer connection for this user
+        const peerConnection = await this.createPeerConnectionForUser(data.userId);
+        
+        if (this.isInitiator) {
+            console.log('📞 Initiator creating offer for joiner:', data.username);
+            try {
+                const offer = await peerConnection.createOffer({
+                    offerToReceiveAudio: true,
+                    offerToReceiveVideo: false
+                });
+                
+                await peerConnection.setLocalDescription(offer);
+                
+                this.socket.emit('webrtc-offer', {
+                    offer: offer,
+                    targetId: data.userId
+                });
+                
+                console.log('✅ Offer sent to joiner:', data.username);
+                
+            } catch (error) {
+                console.error('❌ Error creating offer for group call:', error);
+            }
+        }
     }
 } 

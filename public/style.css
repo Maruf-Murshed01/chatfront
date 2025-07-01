@@ -489,4 +489,83 @@ body {
 
 .back-btn:hover {
     background: rgba(255,255,255,0.3);
+}
+
+/* Everyone option styling */
+.everyone-option {
+    background: #e3f2fd !important;
+    border: 1px solid #2196f3;
+    font-weight: bold;
+    color: #1976d2;
+}
+
+.everyone-option:hover {
+    background: #bbdefb !important;
+}
+
+.everyone-option.private-chat-active {
+    background: #2196f3 !important;
+    color: white !important;
+    border-color: #1976d2;
+}
+
+/* Users separator */
+.users-separator {
+    padding: 0.25rem 0 !important;
+    background: transparent !important;
+    cursor: default !important;
+    margin-bottom: 0.25rem !important;
+}
+
+.users-separator hr {
+    border: none;
+    height: 1px;
+    background: #dee2e6;
+    margin: 0;
+}
+
+.users-separator:hover {
+    background: transparent !important;
+}
+
+.chat-title-section {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+.chat-description {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.8);
+    font-weight: normal;
+    margin-top: -5px;
+}
+
+.chat-description.private {
+    color: #ffc107;
+}
+
+.chat-description.group {
+    color: rgba(255, 255, 255, 0.8);
+}
+
+/* Add visual indicators to the messages area */
+.messages-area::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: #667eea;
+    z-index: 1;
+}
+
+.messages-area.private-mode::before {
+    background: #ffc107;
+}
+
+/* Add icon indicators to the chat title */
+.chat-title-icon {
+    margin-right: 8px;
 } 
