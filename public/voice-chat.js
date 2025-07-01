@@ -474,7 +474,7 @@ class VoiceChat {
             console.log('📹 Video tracks:', this.localStream.getVideoTracks());
             console.log('🎤 Audio tracks:', this.localStream.getAudioTracks());
             
-            // ✅ FIX: Properly set local video
+            // ✅ FIX: Set local video
             if (this.localVideo) {
                 this.localVideo.srcObject = this.localStream;
                 console.log('✅ Local video element set');
@@ -629,20 +629,14 @@ class VoiceChat {
     
     async handleIceCandidate(data) {
         try {
-            // Use the correct peer connection based on call type
-            let peerConnection;
-            
-            if (this.isPrivateMode || !this.isInCall) {
-                // Private call - use single peer connection
-                peerConnection = this.peerConnection;
-            } else {
-                // Group call - use peer connections map
-                peerConnection = this.peerConnections.get(data.senderId);
-            }
+            // ✅ FIX: Simplified logic
+            let peerConnection = this.peerConnection;
             
             if (peerConnection && peerConnection.remoteDescription) {
                 await peerConnection.addIceCandidate(data.candidate);
                 console.log('✅ Added ICE candidate');
+            } else {
+                console.log('⚠️ No peer connection or remote description not set yet');
             }
         } catch (error) {
             console.error('❌ Error adding ICE candidate:', error);
@@ -938,11 +932,31 @@ class VoiceChat {
     }
     
     async handleVideoCallAccepted(data) {
-        console.log('📹 Video call accepted');
+        console.log('📹 Video call accepted, setting up connection...');
         this.currentCallPartner = data.accepterId;
         await this.createPeerConnection();
-        this.isInCall = true;
-        this.toggleCallButtons();
+        
+        try {
+            const offer = await this.peerConnection.createOffer({
+                offerToReceiveAudio: true,
+                offerToReceiveVideo: true  // ✅ Always true for video calls
+            });
+            
+            await this.peerConnection.setLocalDescription(offer);
+            
+            this.socket.emit('webrtc-offer', {
+                offer: offer,
+                targetId: this.currentCallPartner
+            });
+            
+            this.isInCall = true;
+            this.toggleCallButtons();
+            
+        } catch (error) {
+            console.error('❌ Error creating video offer:', error);
+            this.updateCallStatus('Failed to create video call', 'failed');
+            setTimeout(() => this.handleVideoCallEnded(), 3000);
+        }
     }
     
     handleVideoCallRejected() {
