@@ -386,6 +386,7 @@ socket.on('private-user-stop-typing', (data) => {
 // Handle connection events
 socket.on('connect', () => {
     console.log('Connected to server');
+    console.log('Socket connected:', socket.connected);
 });
 
 socket.on('disconnect', () => {
